@@ -1,37 +1,49 @@
 import os
-import re
-import subprocess
 from datetime import datetime
 
 from ament_index_python.packages import get_package_share_directory
+
 from launch import LaunchDescription
 from launch.actions import (
-    DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
     LogInfo,
-    OpaqueFunction,
+    TimerAction,
 )
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 
-def get_zed_serials():
-    """Serial numbers of all connected ZED cameras."""
-    try:
-        import pyzed.sl as sl
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-        devices = sl.Camera.get_device_list()
-        return [dev.serial_number for dev in devices]
-    except Exception as e:
-        print(f"Failed to detect ZED cameras: {e}")
-        return []
+ZED_SERIAL = "48750829"
+CAMERA_NAME = "zed_0"
+
+# Absolute directory for bags
+BAG_DIRECTORY = os.path.expanduser("~/zed_bags")
+
+# Topics published by the current ZED ROS 2 wrapper
+ZED_TOPIC_SUFFIXES = (
+    "rgb/color/rect/image/compressed",
+    "rgb/color/rect/camera_info",
+
+    "depth/depth_registered/compressedDepth",
+    "depth/depth_registered/camera_info",
 
 
-def zed_node(serial, namespace):
-    """ZED launch wrapper for a single camera."""
+    "status/health",
+    "status/heartbeat",
+)
+
+
+# ---------------------------------------------------------------------------
+# ZED
+# ---------------------------------------------------------------------------
+
+def zed_node(serial, camera_name):
+    """Launch a single ZED X camera by serial number."""
+
     zed_launch = os.path.join(
         get_package_share_directory("zed_wrapper"),
         "launch",
@@ -41,72 +53,80 @@ def zed_node(serial, namespace):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(zed_launch),
         launch_arguments={
-            "camera_model": "zed2i",
+            "camera_model": "zedx",
             "serial_number": str(serial),
-            "camera_name": namespace,
+            "camera_name": camera_name,
         }.items(),
     )
 
 
-def get_camera_nodes():
-    """Detect cameras and return launch objects, names, and active camera type."""
-    cameras = []
+# ---------------------------------------------------------------------------
+# Rosbag
+# ---------------------------------------------------------------------------
 
-    # Detect ZED
-    zed_serials = get_zed_serials()
-    zed_names = [f"zed_{i}" for i in range(len(zed_serials))]
-    for serial, name in zip(zed_serials, zed_names):
-        cameras.append(zed_node(serial, name))
+def bag_recorder(camera_name):
+    """Create the rosbag recording process."""
 
-    return cameras, zed_names
+    os.makedirs(BAG_DIRECTORY, exist_ok=True)
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-ZED_TOPIC_SUFFIXES = (
-    "left/image_rect_color/compressed",
-    "right/image_rect_color/compressed",
-    "depth/depth_registered/compressedDepth",
-    "left/camera_info",
-    "right/camera_info",
-    "depth/camera_info",
-)
+    bag_name = os.path.join(
+        BAG_DIRECTORY,
+        f"sensor_data_{timestamp}",
+    )
 
+    topics = [
+        f"/{camera_name}/zed_node/{suffix}"
+        for suffix in ZED_TOPIC_SUFFIXES
+    ]
 
-def bag_recorder(camera_names):
-    topics = []
-
-    for name in camera_names:
-        topics.extend([f"/{name}/{suffix}" for suffix in ZED_TOPIC_SUFFIXES])
-
-    bag_name = f"data/sensor_data_{datetime.now():%Y%m%d_%H%M%S}"
-
-    action = ExecuteProcess(
+    recorder = ExecuteProcess(
         cmd=[
             "ros2",
             "bag",
             "record",
-            "-s",
-            "mcap",
             "-o",
             bag_name,
             *topics,
         ],
         output="screen",
     )
-    return bag_name, action
 
+    return bag_name, recorder
+
+
+# ---------------------------------------------------------------------------
+# Launch description
+# ---------------------------------------------------------------------------
 
 def generate_launch_description():
-    nodes = []
-    camera_nodes, camera_names = get_camera_nodes()
-    nodes.extend(camera_nodes)
-    bag_name, recorder_action = bag_recorder(camera_names)
 
-    nodes += [
-        LogInfo(
-            msg=f"Recording {len(camera_names)} camera(s) to '{bag_name}': "
-            f"{', '.join(camera_names)}"
-        ),
-    ]
-    nodes.append(recorder_action)
+    zed = zed_node(
+        serial=ZED_SERIAL,
+        camera_name=CAMERA_NAME,
+    )
 
-    return LaunchDescription(nodes)
+    bag_name, recorder = bag_recorder(CAMERA_NAME)
+
+    # Give the ZED wrapper time to initialize before starting rosbag.
+    delayed_recorder = TimerAction(
+        period=15.0,
+        actions=[
+            LogInfo(
+                msg=(
+                    f"Starting rosbag recording:\n"
+                    f"  {bag_name}"
+                )
+            ),
+            recorder,
+        ],
+    )
+
+    return LaunchDescription(
+        [
+            zed,
+            delayed_recorder,
+        ]
+    )
+
