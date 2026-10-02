@@ -1,48 +1,67 @@
 import os
 from datetime import datetime
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
+    DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
     LogInfo,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+
+
+DEFAULT_CONFIG = os.path.join(
+    get_package_share_directory("cattle_cameras"),
+    "config",
+    "cameras.yaml",
+)
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-ZED_SERIAL = "48750829"
-CAMERA_NAME = "zed_0"
 
-# Absolute directory for bags
-BAG_DIRECTORY = os.path.expanduser("~/zed_bags")
+def load_config(path):
+    """Load and validate the camera config yaml."""
 
-# Topics published by the current ZED ROS 2 wrapper
-ZED_TOPIC_SUFFIXES = (
-    "rgb/color/rect/image/compressed",
-    "rgb/color/rect/camera_info",
+    with open(path) as f:
+        config = yaml.safe_load(f) or {}
 
-    "depth/depth_registered/compressedDepth",
-    "depth/depth_registered/camera_info",
+    cameras = config.get("cameras") or []
+    if not cameras:
+        raise RuntimeError(f"No cameras defined in {path}")
 
+    default_suffixes = config.get("topic_suffixes") or []
+    names = set()
+    for cam in cameras:
+        if "name" not in cam or "serial" not in cam:
+            raise RuntimeError(f"Camera entry needs 'name' and 'serial': {cam}")
+        if cam["name"] in names:
+            raise RuntimeError(f"Duplicate camera name '{cam['name']}' in {path}")
+        names.add(cam["name"])
+        cam.setdefault("model", "zedx")
+        cam.setdefault("topic_suffixes", default_suffixes)
 
-    "status/health",
-    "status/heartbeat",
-)
+    config["cameras"] = cameras
+    return config
 
 
 # ---------------------------------------------------------------------------
 # ZED
 # ---------------------------------------------------------------------------
 
-def zed_node(serial, camera_name):
-    """Launch a single ZED X camera by serial number."""
+
+def zed_node(camera):
+    """Launch a single ZED camera from its config entry."""
 
     zed_launch = os.path.join(
         get_package_share_directory("zed_wrapper"),
@@ -53,43 +72,39 @@ def zed_node(serial, camera_name):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(zed_launch),
         launch_arguments={
-            "camera_model": "zedx",
-            "serial_number": str(serial),
-            "camera_name": camera_name,
+            "camera_model": camera["model"],
+            "serial_number": str(camera["serial"]),
+            "camera_name": camera["name"],
         }.items(),
     )
+
+
+def camera_topics(camera):
+    """Full topic names to record for a camera."""
+
+    return [
+        f"/{camera['name']}/zed_node/{suffix}" for suffix in camera["topic_suffixes"]
+    ]
 
 
 # ---------------------------------------------------------------------------
 # Rosbag
 # ---------------------------------------------------------------------------
 
-def bag_recorder(camera_name):
-    """Create the rosbag recording process."""
 
-    os.makedirs(BAG_DIRECTORY, exist_ok=True)
+def bag_recorder(bag_directory, cameras):
+    """Create one rosbag recording process covering all cameras."""
+
+    bag_directory = os.path.expanduser(bag_directory)
+    os.makedirs(bag_directory, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bag_name = os.path.join(bag_directory, f"sensor_data_{timestamp}")
 
-    bag_name = os.path.join(
-        BAG_DIRECTORY,
-        f"sensor_data_{timestamp}",
-    )
-
-    topics = [
-        f"/{camera_name}/zed_node/{suffix}"
-        for suffix in ZED_TOPIC_SUFFIXES
-    ]
+    topics = [t for cam in cameras for t in camera_topics(cam)]
 
     recorder = ExecuteProcess(
-        cmd=[
-            "ros2",
-            "bag",
-            "record",
-            "-o",
-            bag_name,
-            *topics,
-        ],
+        cmd=["ros2", "bag", "record", "-o", bag_name, *topics],
         output="screen",
     )
 
@@ -100,22 +115,25 @@ def bag_recorder(camera_name):
 # Launch description
 # ---------------------------------------------------------------------------
 
-def generate_launch_description():
 
-    zed = zed_node(
-        serial=ZED_SERIAL,
-        camera_name=CAMERA_NAME,
+def launch_setup(context):
+    config = load_config(LaunchConfiguration("cameras_config").perform(context))
+    cameras = config["cameras"]
+
+    zeds = [zed_node(cam) for cam in cameras]
+
+    bag_name, recorder = bag_recorder(
+        config.get("bag_directory", "~/zed_bags"), cameras
     )
 
-    bag_name, recorder = bag_recorder(CAMERA_NAME)
-
-    # Give the ZED wrapper time to initialize before starting rosbag.
+    # Give the ZED wrappers time to initialize before starting rosbag.
     delayed_recorder = TimerAction(
-        period=15.0,
+        period=float(config.get("record_delay", 15.0)),
         actions=[
             LogInfo(
                 msg=(
-                    f"Starting rosbag recording:\n"
+                    f"Starting rosbag recording for "
+                    f"{', '.join(c['name'] for c in cameras)}:\n"
                     f"  {bag_name}"
                 )
             ),
@@ -123,10 +141,17 @@ def generate_launch_description():
         ],
     )
 
+    return [*zeds, delayed_recorder]
+
+
+def generate_launch_description():
     return LaunchDescription(
         [
-            zed,
-            delayed_recorder,
+            DeclareLaunchArgument(
+                "cameras_config",
+                default_value=DEFAULT_CONFIG,
+                description="Path to the cameras yaml file",
+            ),
+            OpaqueFunction(function=launch_setup),
         ]
     )
-
