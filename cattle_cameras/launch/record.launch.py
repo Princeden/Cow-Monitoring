@@ -109,13 +109,47 @@ def detection_params(config):
     }
 
 
-def camera_pipeline(camera, config):
-    """Detector + recorder pair: record this camera only while a calf is in view."""
+def detection_enabled(context, config):
+    """`detection:=true|false` on the command line wins over the yaml."""
+
+    arg = LaunchConfiguration("detection").perform(context).strip().lower()
+    if arg:
+        if arg not in ("true", "false"):
+            raise RuntimeError(f"detection must be true or false, got '{arg}'")
+        return arg == "true"
+    return bool((config.get("detection") or {}).get("enabled", True))
+
+
+def camera_pipeline(camera, config, detect):
+    """Recorder for one camera, plus a detector if recording is calf-triggered.
+
+    Without detection the recorder records continuously and YOLO is never loaded.
+    """
 
     name = camera["name"]
     trigger_topic = f"/{name}/calf_present"
     image_suffix = config.get("detection_image_suffix", "rgb/color/rect/image")
     image_topic = f"/{name}/zed_node/{image_suffix}"
+
+    recorder = Node(
+        package="cattle_cameras",
+        executable="recorder_manager",
+        name=f"{name}_recorder",
+        output="screen",
+        parameters=[
+            {
+                "trigger_topic": trigger_topic,
+                "topics": camera_topics(camera),
+                "bag_output_dir": config.get("bag_directory", "~/zed_bags"),
+                "bag_prefix": name,
+                "pre_roll": float(config.get("pre_roll", 5.0)),
+                "always_record": not detect,
+            }
+        ],
+    )
+
+    if not detect:
+        return [recorder]
 
     detector = Node(
         package="cattle_cameras",
@@ -132,23 +166,7 @@ def camera_pipeline(camera, config):
         ],
     )
 
-    recorder = Node(
-        package="cattle_cameras",
-        executable="recorder_manager",
-        name=f"{name}_recorder",
-        output="screen",
-        parameters=[
-            {
-                "trigger_topic": trigger_topic,
-                "topics": camera_topics(camera),
-                "bag_output_dir": config.get("bag_directory", "~/zed_bags"),
-                "bag_prefix": name,
-                "pre_roll": float(config.get("pre_roll", 5.0)),
-            }
-        ],
-    )
-
-    return [detector, recorder]
+    return [recorder, detector]
 
 
 # ---------------------------------------------------------------------------
@@ -159,17 +177,19 @@ def camera_pipeline(camera, config):
 def launch_setup(context):
     config = load_config(LaunchConfiguration("cameras_config").perform(context))
     cameras = config["cameras"]
+    detect = detection_enabled(context, config)
 
     actions = []
     for cam in cameras:
         actions.append(zed_node(cam))
-        actions.extend(camera_pipeline(cam, config))
+        actions.extend(camera_pipeline(cam, config, detect))
 
+    when = "when a calf is detected" if detect else "continuously (detection off)"
     actions.append(
         LogInfo(
             msg=(
-                f"Recording {', '.join(c['name'] for c in cameras)} when a calf is "
-                f"detected, into {config.get('bag_directory', '~/zed_bags')}"
+                f"Recording {', '.join(c['name'] for c in cameras)} {when}, "
+                f"into {config.get('bag_directory', '~/zed_bags')}"
             )
         )
     )
@@ -183,6 +203,14 @@ def generate_launch_description():
                 "cameras_config",
                 default_value=DEFAULT_CONFIG,
                 description="Path to the cameras yaml file",
+            ),
+            DeclareLaunchArgument(
+                "detection",
+                default_value="",
+                description=(
+                    "true: record only while a calf is detected; false: record "
+                    "continuously without YOLO. Empty uses detection.enabled from the yaml."
+                ),
             ),
             OpaqueFunction(function=launch_setup),
         ]

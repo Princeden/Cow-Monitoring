@@ -29,6 +29,8 @@ class RecorderManagerNode(Node):
         # Seconds of messages before the trigger to include in each bag.
         self.declare_parameter("pre_roll", 5.0)
         self.declare_parameter("storage_id", "sqlite3")
+        # Record continuously from startup and ignore the trigger.
+        self.declare_parameter("always_record", False)
 
         self.trigger_topic = self.get_parameter("trigger_topic").value
         self.topics = list(self.get_parameter("topics").value)
@@ -38,6 +40,7 @@ class RecorderManagerNode(Node):
         self.bag_prefix = self.get_parameter("bag_prefix").value
         self.pre_roll_ns = int(self.get_parameter("pre_roll").value * 1e9)
         self.storage_id = self.get_parameter("storage_id").value
+        self.always_record = self.get_parameter("always_record").value
 
         os.makedirs(self.bag_output_dir, exist_ok=True)
 
@@ -56,6 +59,15 @@ class RecorderManagerNode(Node):
         # Topics may not exist yet (camera still starting), so keep looking
         # until every one has been subscribed.
         self.discover_timer = self.create_timer(1.0, self.discover_topics)
+
+        if self.always_record:
+            # Topics are added to the bag as they are discovered.
+            self.get_logger().info(
+                f"Recorder manager recording continuously. topics={self.topics} "
+                f"output_dir={self.bag_output_dir}"
+            )
+            self.start_recording()
+            return
 
         self.sub = self.create_subscription(
             Bool, self.trigger_topic, self.trigger_callback, 10

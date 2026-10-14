@@ -4,6 +4,9 @@ bag_directory: ~/zed_bags
 # Recording only runs while a calf is detected. Each camera gets its own
 # detector and its own bags (<bag_directory>/<camera name>_<timestamp>).
 detection:
+  # false = record continuously and never load YOLO.
+  # Override per run with `detection:=true|false` on the launch command.
+  enabled: true
   # Bare filenames are looked up in the package's weights/ dir. On the Jetson,
   # export a TensorRT engine once and point this at it for much faster inference:
   #   yolo export model=weights/box_model.pt format=engine half=True imgsz=640

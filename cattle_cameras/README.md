@@ -5,6 +5,12 @@ compressed topic streams in a ros bag, but only while a calf is in frame. Also i
 
 Usage after building is `ros2 launch cattle_cameras record.launch.py`
 
+To record continuously without any detection (YOLO/ultralytics is not loaded):
+
+`ros2 launch cattle_cameras record.launch.py detection:=false`
+
+The default comes from `detection.enabled` in the yaml.
+
 #### Camera configuration
 
 Cameras are defined in `config/cameras.yaml` (serial number, name, optional model and per-camera topic list). `record.launch.py` starts, for each entry, a ZED wrapper, a YOLO `detector_node` and a `recorder_manager`. The detector publishes `/<camera>/calf_present`; the recorder keeps the last `pre_roll` seconds of messages in memory and, when it turns true, starts a new bag (`<bag_directory>/<camera>_<timestamp>`) beginning with that buffer, and closes it once no calf has been seen for `stop_after` seconds. Detection settings live under `detection:` in the yaml. To use a different file:
