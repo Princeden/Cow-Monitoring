@@ -1,0 +1,20 @@
+# Cameras launched and recorded by record.launch.py.
+bag_directory: ~/zed_bags
+
+# Seconds to wait for the ZED wrappers to initialize before recording starts.
+record_delay: 15.0
+
+# Topics recorded for every camera, relative to /<camera name>/zed_node/.
+topic_suffixes:
+  - rgb/color/rect/image/compressed
+  - rgb/color/rect/camera_info
+  - depth/depth_registered/compressedDepth
+  - depth/depth_registered/camera_info
+  - status/health
+  - status/heartbeat
+
+cameras:
+  - name: zed_0
+    serial: 48750829
+    # model: zedx                 # optional, defaults to zedx
+    # topic_suffixes: [...]       # optional, overrides the list above
