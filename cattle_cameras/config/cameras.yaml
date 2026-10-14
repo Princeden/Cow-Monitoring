@@ -1,8 +1,34 @@
 # Cameras launched and recorded by record.launch.py.
 bag_directory: ~/zed_bags
 
-# Seconds to wait for the ZED wrappers to initialize before recording starts.
-record_delay: 15.0
+# Recording only runs while a calf is detected. Each camera gets its own
+# detector and its own bags (<bag_directory>/<camera name>_<timestamp>).
+detection:
+  # Bare filenames are looked up in the package's weights/ dir. On the Jetson,
+  # export a TensorRT engine once and point this at it for much faster inference:
+  #   yolo export model=weights/box_model.pt format=engine half=True imgsz=640
+  weights: box_model.pt
+  # Classes that count as a calf. Empty = any class (box_model's classes are all
+  # behaviours: standing, lying, feeding..., so any detection means an animal).
+  # Use [cow] with a COCO model or keypoint_model.pt.
+  class_names: []
+  conf: 0.5
+  # Only count detections whose box centre is in this part of the frame
+  # (fractions of width/height: [x1, y1, x2, y2]).
+  region: [0.0, 0.0, 1.0, 1.0]
+  start_frames: 3        # consecutive positive frames before recording starts
+  stop_after: 10.0       # seconds with no calf before recording stops
+  max_rate: 5.0          # max inferences per second per camera
+  imgsz: 640
+  half: true             # FP16 on the Jetson GPU
+  publish_debug_image: false  # /<camera>/detector/dbg_image, for tuning
+
+# Seconds of footage from before the detection to include at the start of each
+# bag. Held in memory per camera, so keep it modest.
+pre_roll: 5.0
+
+# Image topic the detector reads, relative to /<camera name>/zed_node/.
+detection_image_suffix: rgb/color/rect/image
 
 # Topics recorded for every camera, relative to /<camera name>/zed_node/.
 topic_suffixes:

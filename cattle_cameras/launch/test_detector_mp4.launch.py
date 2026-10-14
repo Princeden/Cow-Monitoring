@@ -7,7 +7,7 @@ detector_node computes -- no reimplemented logic.
 Usage:
     ros2 launch cattle_cameras test_detector_mp4.launch.py \
         video_path:=/path/to/video.mp4 \
-        weights:=yolov8n.pt class_name:=person
+        weights:=yolov8n.pt class_names:=[person]
 """
 
 from launch import LaunchDescription
@@ -24,11 +24,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("video_path", description="Path to mp4 file"),
             DeclareLaunchArgument("weights", default_value="yolov8n.pt"),
-            DeclareLaunchArgument("class_name", default_value="cow"),
+            DeclareLaunchArgument("class_names", default_value="[cow]"),
             DeclareLaunchArgument("conf", default_value="0.5"),
             DeclareLaunchArgument("fps", default_value="15.0"),
             DeclareLaunchArgument(
-                "region", default_value="[0.33, 0.0, 0.66, 1.0]"
+                "region", default_value="[0.0, 0.0, 1.0, 1.0]"
             ),
             DeclareLaunchArgument("loop", default_value="true"),
             Node(
@@ -52,7 +52,7 @@ def generate_launch_description():
                     {
                         "image_topic": image_topic,
                         "weights": LaunchConfiguration("weights"),
-                        "class_name": LaunchConfiguration("class_name"),
+                        "class_names": LaunchConfiguration("class_names"),
                         "conf": LaunchConfiguration("conf"),
                         "region": LaunchConfiguration("region"),
                         "publish_debug_image": True,

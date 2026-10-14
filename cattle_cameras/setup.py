@@ -13,7 +13,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
-        ("share/" + package_name + "/weights", glob("weights/*.pt")),
+        ("share/" + package_name + "/weights", glob("weights/*.pt") + glob("weights/*.engine")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -31,6 +31,7 @@ setup(
             "detection_viewer = cattle_cameras.detection_viewer:main",
             "detector_node = cattle_cameras.detector:main",
             "mp4_publisher = cattle_cameras.mp4_publisher:main",
+            "recorder_manager = cattle_cameras.recorder_manager:main",
         ],
     },
 )
